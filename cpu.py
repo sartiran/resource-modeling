@@ -7,17 +7,13 @@ Determine the CPU model by running under various configuration changes. BaseMode
 provide defaults and configN.json overrides values in those configs or earlier ones in the list
 """
 
-from __future__ import division
-from __future__ import print_function
-
 import sys
-import collections
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
-import json
-from configure import configure, run_model, mc_event_model, in_shutdown
-from performance import performance_by_year
+from configure import ResourceModel
+#from performance import performance_by_year
 
 # Basic parameters
 kilo = 1000
@@ -29,29 +25,40 @@ seconds_per_year = 86400 * 365
 seconds_per_month = 86400 * 30
 running_time = 7.8E06
 
+
+class CPUModel(ResourceModel):
+
+    def __init__(self, models,  usedefault=True):
+
+        super(CPUModel, self).__init__(models, usedefault)
+
+
+
 modelNames = None
 if len(sys.argv) > 1:
     modelNames = sys.argv[1].split(',')
-model = configure(modelNames)
+
+#model = configure(modelNameis)
+rm =  ResourceModel(modelNames)
 
 # The very important list of years
-YEARS = list(range(model['start_year'], model['end_year']+1))
+YEARS = rm.years
 
 # Get the performance year by year which includes the software improvement factor
-reco_time = {year: performance_by_year(model, year, 'RECO', data_type='data')[0] for year in YEARS}
+reco_time = {year: rm.performance_by_year( year, 'RECO', data_type='data')[0] for year in YEARS}
 
-lhc_sim_time = {year: performance_by_year(model, year, 'GENSIM',
+lhc_sim_time = {year: rm.performance_by_year( year, 'GENSIM',
                                               data_type='mc', kind='2017')[0] +
-                  performance_by_year(model, year, 'DIGI',
+                  rm.performance_by_year( year, 'DIGI',
                                           data_type='mc', kind='2017')[0] +
-                  performance_by_year(model, year, 'RECO',
+                  rm.performance_by_year( year, 'RECO',
                                           data_type='mc', kind='2017')[0] for year in YEARS}
 
-hllhc_sim_time = {year: performance_by_year(model, year, 'GENSIM',
+hllhc_sim_time = {year: rm.performance_by_year( year, 'GENSIM',
                                             data_type='mc', kind='2026')[0] +
-                        performance_by_year(model, year, 'DIGI',
+                        rm.performance_by_year( year, 'DIGI',
                                             data_type='mc', kind='2026')[0] +
-                        performance_by_year(model, year, 'RECO',
+                        rm.performance_by_year( year, 'RECO',
                                             data_type='mc', kind='2026')[0] for year in YEARS}
 
 # general pattern:
@@ -61,10 +68,10 @@ hllhc_sim_time = {year: performance_by_year(model, year, 'GENSIM',
 # CPU time requirement calculations, in HS06 * s
 # Take the running time and event rate from the model
 
-data_events = {i: run_model(model, i, data_type='data').events for i in YEARS}
+data_events = {i: rm.run_model(i, data_type='data').events for i in YEARS}
 
-lhc_mc_events = {i: mc_event_model(model, i)['2017'] for i in YEARS}
-hllhc_mc_events = {i: mc_event_model(model, i)['2026'] for i in YEARS}
+lhc_mc_events = {i: rm.mc_event_model(i)['2017'] for i in YEARS}
+hllhc_mc_events = {i: rm.mc_event_model(i)['2026'] for i in YEARS}
 
 #Note the quantity below is for prompt reco only.
 data_cpu_time = {i : data_events[i] * reco_time[i] for i in YEARS}
@@ -113,7 +120,7 @@ hllhc_mc_cpu_required = {i : hllhc_mc_cpu_time[i] / seconds_per_year for i in YE
 # era, i.e. no need to compress HL-LHC MC when we are still in LHC era.
 
 for i in YEARS:
-    if (i in model['new_detector_years']):
+    if (i in rm.model['new_detector_years']):
         if i < 2026:
             lhc_mc_cpu_required[i] = lhc_mc_cpu_time[i]/ (seconds_per_year / 2)
         else:
@@ -167,8 +174,8 @@ for i in YEARS:
 # have three times as many events as we had the previous year.
 
 for i in YEARS:
-    shutdown_this_year, dummy = in_shutdown(model,i)
-    shutdown_last_year, dummy = in_shutdown(model,i-1)
+    shutdown_this_year, dummy = rm.in_shutdown(i)
+    shutdown_last_year, dummy = rm.in_shutdown(i-1)
     if (shutdown_this_year and not(shutdown_last_year)):
         data_events[i] = 3 * data_events[i-1]
         rereco_cpu_time[i] = data_events[i] * reco_time[i]
@@ -210,7 +217,7 @@ hpc_cpu_time = {i: rereco_cpu_time[i] +
 # for the histogram to work.  Not to mention that I couldn't get the
 # dictionary comprehension to work here.
 
-cpu_improvement_factor = model['improvement_factors']['hardware']
+cpu_improvement_factor = rm.model['improvement_factors']['hardware']
 cpu_improvement = {i : cpu_improvement_factor ** (i-2017) for i in YEARS}
 
 cpu_capacity = {2016 : 1.4 * mega}
@@ -232,33 +239,33 @@ del cpu_time_capacity[2016]
 # CPU capacity model ala data.py
 
 # Set the initial points
-cpuCapacity = {str(model['capacity_model']['cpu_year']): model['capacity_model']['cpu_start']}
-cpuTimeCapacity = {str(model['capacity_model']['cpu_year']): model['capacity_model']['cpu_start'] * seconds_per_year}
+cpuCapacity = {str(rm.model['capacity_model']['cpu_year']): rm.model['capacity_model']['cpu_start']}
+cpuTimeCapacity = {str(rm.model['capacity_model']['cpu_year']): rm.model['capacity_model']['cpu_start'] * seconds_per_year}
 
 
 # A bit of a kludge. Assume what we have now was bought and will be retired in equal chunks over its lifetime
 cpuAdded = {}
-for year in range(model['capacity_model']['cpu_year'] - model['capacity_model']['cpu_lifetime'] + 1,
-                  model['capacity_model']['cpu_year'] + 1):
-    retired = model['capacity_model']['cpu_start'] / model['capacity_model']['cpu_lifetime']
+for year in range(rm.model['capacity_model']['cpu_year'] - rm.model['capacity_model']['cpu_lifetime'] + 1,
+                  rm.model['capacity_model']['cpu_year'] + 1):
+    retired = rm.model['capacity_model']['cpu_start'] / rm.model['capacity_model']['cpu_lifetime']
     cpuAdded[str(year)] = retired
 
-cpuFactor = model['improvement_factors']['hardware']
+cpuFactor = rm.model['improvement_factors']['hardware']
 
 for year in YEARS:
     if str(year) not in cpuCapacity:
         cpuDelta = 0  # Find the delta which can be time dependant
-        cpuDeltas = model['capacity_model']['cpu_delta']
+        cpuDeltas = rm.model['capacity_model']['cpu_delta']
         for deltaYear in sorted(cpuDeltas.keys()):
             if int(year) >= int(deltaYear):
                 lastCpuYear = int(deltaYear)
-                cpuDelta = model['capacity_model']['cpu_delta'][deltaYear]
+                cpuDelta = rm.model['capacity_model']['cpu_delta'][deltaYear]
 
         cpuAdded[str(year)] = cpuDelta * cpuFactor ** (int(year) - int(lastCpuYear))
 
         # Retire cpu added N years ago or retire 0
 
-        cpuRetired = cpuAdded.get(str(int(year) - model['capacity_model']['cpu_lifetime']), 0)
+        cpuRetired = cpuAdded.get(str(int(year) - rm.model['capacity_model']['cpu_lifetime']), 0)
         cpuCapacity[str(year)] = cpuCapacity[str(int(year) - 1)] + cpuAdded[str(year)] - cpuRetired
         cpuTimeCapacity[str(year)] = cpuCapacity[str(year)] * seconds_per_year
 

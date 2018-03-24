@@ -13,64 +13,65 @@ import json
 import sys
 from collections import defaultdict
 
-from configure import configure, in_shutdown, mc_event_model, run_model
+from configure import ResourceModel
 from plotting import plotStorage, plotStorageWithCapacity
 from utils import time_dependent_value
-from performance import performance_by_year
+#from performance import performance_by_year
 
 PETA = 1e15
 
 modelNames = None
 if len(sys.argv) > 1:
     modelNames = sys.argv[1].split(',')
-model = configure(modelNames)
+rm = ResourceModel(modelNames)
 
-YEARS = list(range(model['start_year'], model['end_year'] + 1))
-TIERS = list(model['tier_sizes'].keys())
-STATIC_TIERS = list(sorted(set(model['static_disk'].keys() + model['static_tape'].keys())))
+
+YEARS = rm.years
+TIERS = list(rm.model['tier_sizes'].keys())
+STATIC_TIERS = list(sorted(set(rm.model['static_disk'].keys() + rm.model['static_tape'].keys())))
 
 # Build the capacity model
 
 # Set the initial points
-diskCapacity = {str(model['capacity_model']['disk_year']): model['capacity_model']['disk_start']}
-tapeCapacity = {str(model['capacity_model']['tape_year']): model['capacity_model']['tape_start']}
+diskCapacity = {str(rm.model['capacity_model']['disk_year']): rm.model['capacity_model']['disk_start']}
+tapeCapacity = {str(rm.model['capacity_model']['tape_year']): rm.model['capacity_model']['tape_start']}
 
 # A bit of a kludge. Assume what we have now was bought and will be retired in equal chunks over its lifetime
 diskAdded = {}
 tapeAdded = {}
-for year in range(model['capacity_model']['disk_year'] - model['capacity_model']['disk_lifetime'] + 1,
-                  model['capacity_model']['disk_year'] + 1):
-    retired = model['capacity_model']['disk_start'] / model['capacity_model']['disk_lifetime']
+for year in range(rm.model['capacity_model']['disk_year'] - rm.model['capacity_model']['disk_lifetime'] + 1,
+                  rm.model['capacity_model']['disk_year'] + 1):
+    retired = rm.model['capacity_model']['disk_start'] / rm.model['capacity_model']['disk_lifetime']
     diskAdded[str(year)] = retired
-for year in range(model['capacity_model']['tape_year'] - model['capacity_model']['tape_lifetime'] + 1,
-                  model['capacity_model']['tape_year'] + 1):
-    retired = model['capacity_model']['tape_start'] / model['capacity_model']['tape_lifetime']
+for year in range(rm.model['capacity_model']['tape_year'] - rm.model['capacity_model']['tape_lifetime'] + 1,
+                  rm.model['capacity_model']['tape_year'] + 1):
+    retired = rm.model['capacity_model']['tape_start'] / rm.model['capacity_model']['tape_lifetime']
     tapeAdded[str(year)] = retired
 
-diskFactor = model['improvement_factors']['disk']
-tapeFactor = model['improvement_factors']['tape']
+diskFactor = rm.model['improvement_factors']['disk']
+tapeFactor = rm.model['improvement_factors']['tape']
 
 for year in YEARS:
     if str(year) not in diskCapacity:
         diskDelta = 0  # Find the delta which can be time dependant
         tapeDelta = 0  # Find the delta which can be time dependant
-        diskDeltas = model['capacity_model']['disk_delta']
-        tapeDeltas = model['capacity_model']['tape_delta']
+        diskDeltas = rm.model['capacity_model']['disk_delta']
+        tapeDeltas = rm.model['capacity_model']['tape_delta']
         for deltaYear in sorted(diskDeltas.keys()):
             if int(year) >= int(deltaYear):
                 lastDiskYear = int(deltaYear)
-                diskDelta = model['capacity_model']['disk_delta'][deltaYear]
+                diskDelta = rm.model['capacity_model']['disk_delta'][deltaYear]
         for deltaYear in sorted(tapeDeltas.keys()):
             if int(year) >= int(deltaYear):
                 lastTapeYear = int(deltaYear)
-                tapeDelta = model['capacity_model']['tape_delta'][deltaYear]
+                tapeDelta = rm.model['capacity_model']['tape_delta'][deltaYear]
 
         diskAdded[str(year)] = diskDelta * diskFactor**(int(year) - int(lastDiskYear))
         tapeAdded[str(year)] = tapeDelta * tapeFactor**(int(year) - int(lastTapeYear))
         # Retire disk/tape added N years ago or retire 0
 
-        diskRetired = diskAdded.get(str(int(year) - model['capacity_model']['disk_lifetime']), 0)
-        tapeRetired = tapeAdded.get(str(int(year) - model['capacity_model']['tape_lifetime']), 0)
+        diskRetired = diskAdded.get(str(int(year) - rm.model['capacity_model']['disk_lifetime']), 0)
+        tapeRetired = tapeAdded.get(str(int(year) - rm.model['capacity_model']['tape_lifetime']), 0)
         diskCapacity[str(year)] = diskCapacity[str(int(year) - 1)] + diskAdded[str(year)] - diskRetired
         tapeCapacity[str(year)] = tapeCapacity[str(int(year) - 1)] + tapeAdded[str(year)] - tapeRetired
 
@@ -85,21 +86,21 @@ diskCopies = {}
 tapeCopies = {}
 for tier in TIERS:
     diskCopies[tier] = [versions * replicas for versions, replicas in
-                        zip(model['storage_model']['versions'][tier], model['storage_model']['disk_replicas'][tier])]
+                        zip(rm.model['storage_model']['versions'][tier], rm.model['storage_model']['disk_replicas'][tier])]
     # Assume we have the highest number of versions in year 1, save n replicas of that
-    tapeCopies[tier] = model['storage_model']['versions'][tier][0] * model['storage_model']['tape_replicas'][tier]
+    tapeCopies[tier] = rm.model['storage_model']['versions'][tier][0] * rm.model['storage_model']['tape_replicas'][tier]
     if not tapeCopies[tier]: tapeCopies[tier] = [0, 0, 0]
 
 # Loop over years to determine how much is produced without versions or replicas
 for year in YEARS:
     for tier in TIERS:
-        if tier not in model['mc_only_tiers']:
-            dummyCPU, tierSize = performance_by_year(model, year, tier, data_type='data')
-            dataProduced[year]['data'][tier] += tierSize * run_model(model, year, data_type='data').events
-        if tier not in model['data_only_tiers']:
-            mcEvents = mc_event_model(model, year)
+        if tier not in rm.model['mc_only_tiers']:
+            dummyCPU, tierSize = rm.performance_by_year(year, tier, data_type='data')
+            dataProduced[year]['data'][tier] += tierSize * rm.run_model(year, data_type='data').events
+        if tier not in rm.model['data_only_tiers']:
+            mcEvents = rm.mc_event_model(year)
             for kind, events in mcEvents.items():
-                dummyCPU, tierSize = performance_by_year(model, year, tier, data_type='mc', kind=kind)
+                dummyCPU, tierSize = rm.performance_by_year(year, tier, data_type='mc', kind=kind)
                 dataProduced[year]['mc'][tier] += tierSize * events
 
 producedByTier = [[0 for _i in range(len(TIERS))] for _j in YEARS]
@@ -118,12 +119,12 @@ tapeByYear = [[0 for _i in YearColumns] for _j in YEARS]
 # Loop over years to determine how much is saved
 for year in YEARS:
     # Add static (or nearly) data
-    for tier, spaces in model['static_disk'].items():
+    for tier, spaces in rm.model['static_disk'].items():
         size, producedYear = time_dependent_value(year=year, values=spaces)
         dataOnDisk[year]['Other'][tier] += size
         diskSamples[year].append([producedYear, 'Other', tier, size])
         diskByYear[YEARS.index(year)][YEARS.index(producedYear)] += size / PETA
-    for tier, spaces in model['static_tape'].items():
+    for tier, spaces in rm.model['static_tape'].items():
         size, producedYear = time_dependent_value(year=year, values=spaces)
         dataOnTape[year]['Other'][tier] += size
         tapeSamples[year].append([producedYear, 'Other', tier, size])
@@ -139,8 +140,8 @@ for year in YEARS:
                     if year - producedYear >= len(diskCopiesByDelta):
                         revOnDisk = diskCopiesByDelta[-1]  # Revisions = versions * copies
                         revOnTape = tapeCopiesByDelta[-1]  # Assume what we have for the last year is good for out years
-                    elif in_shutdown(model, year):
-                        inShutdown, lastRunningYear = in_shutdown(model, year)
+                    elif rm.in_shutdown(year):
+                        inShutdown, lastRunningYear = rm.in_shutdown(year)
                         revOnDisk = diskCopiesByDelta[lastRunningYear - producedYear]
                         revOnTape = tapeCopiesByDelta[lastRunningYear - producedYear]
                     else:

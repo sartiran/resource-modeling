@@ -7,6 +7,9 @@ Common plotting code
 
 from __future__ import absolute_import, division, print_function
 
+import matplotlib
+matplotlib.use('Agg')
+
 import pandas as pd
 
 # Make sort order that includes tiers from unrefined to refined and both string and integer years
@@ -18,8 +21,6 @@ COLOR_MAP = 'Paired'
 def plotStorageWithCapacity(data, name, title='', columns=None, bars=None):
     bars = sorted(bars, key=SORT_ORDER.index)
     frame = pd.DataFrame(data, columns=columns)
-    # ax = frame[['Capacity', 'Year']].plot(x='Year', linestyle='-', marker='o', color='Black')
-    # ax = frame[bars + ['Year']].plot(x='Year', kind='bar', stacked=True, ax=ax, colormap=COLOR_MAP)
     ax = frame[bars + ['Year']].plot(x='Year', kind='bar', stacked=True, colormap=COLOR_MAP)
     ax.set(ylabel='PB', title=title)
 

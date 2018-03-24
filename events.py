@@ -11,28 +11,42 @@ from __future__ import division, print_function
 
 import sys
 
-from configure import configure, mc_event_model, run_model
+from configure import ResourceModel
 from plotting import plotEvents
 
 GIGA = 1e9
 
+class EventsModel(ResourceModel):
+
+    def __init__(self, models,  usedefault=True):
+
+        super(EventsModel, self).__init__(models, usedefault)
+
+        self.define_data_kinds()
+        self.get_events_by_year()
+
+    def define_data_kinds(self):
+
+        # Call the data model with a random year to get the fields
+        self.data_kinds = [key + ' MC' for key in self.mc_event_model(2020).keys()]
+        self.data_kinds.append('Data')
+
+    def get_events_by_year(self):
+        
+        eby = [[0 for _i in range(len(self.data_kinds))] for _j in self.years]
+
+        for year in self.years:
+            eby[self.years.index(year)][self.data_kinds.index('Data')] = self.run_model(year).events / GIGA
+            mc_evts = self.mc_event_model(year)
+            for mc_kind, count in mc_evts.items():
+                eby[self.years.index(year)][self.data_kinds.index(mc_kind + ' MC')] = count / GIGA
+        
+        self.events_by_year = eby
+
 modelNames = None
 if len(sys.argv) > 1:
     modelNames = sys.argv[1].split(',')
-model = configure(modelNames)
+em = EventsModel(modelNames)
 
-YEARS = list(range(model['start_year'], model['end_year'] + 1))
+plotEvents(em.events_by_year, name='Produced by Kind.png', title='Events produced by type', columns=em.data_kinds, index=em.years)
 
-# Call the data model with a random year to get the fields
-dataKinds = [key + ' MC' for key in mc_event_model(model, 2020).keys()]
-dataKinds.append('Data')
-
-eventsByYear = [[0 for _i in range(len(dataKinds))] for _j in YEARS]
-
-for year in YEARS:
-    eventsByYear[YEARS.index(year)][dataKinds.index('Data')] = run_model(model, year).events / GIGA
-    mcEvents = mc_event_model(model, year)
-    for mcKind, count in mcEvents.items():
-        eventsByYear[YEARS.index(year)][dataKinds.index(mcKind + ' MC')] = count / GIGA
-
-plotEvents(eventsByYear, name='Produced by Kind.png', title='Events produced by type', columns=dataKinds, index=YEARS)
