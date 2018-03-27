@@ -1,0 +1,8 @@
+#! /bin/bash
+
+cd /workdir
+
+./cpu.py
+./data.py
+./events.py
+

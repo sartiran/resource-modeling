@@ -9,19 +9,16 @@ Load the model parameters from two JSON files
  Return all of this as a nested dictionary
 """
 
+from __future__ import absolute_import, division, print_function
 import json
 from collections import namedtuple
 
-from utils import time_dependent_value, interpolate_value
-
 SECONDS_PER_YEAR = 365.25 * 24 * 3600
+GIGA = 1e9
 
 DEFAULT_MODEL = ['BaseModel.json', 'RealisticModel.json']
 
 class ResourceModel(object):
-    """
-    """
-
     def __init__(self, inputs, usedefault=True):
 
         if(usedefault):
@@ -60,79 +57,6 @@ class ResourceModel(object):
            year -= 1
 
         return inShutdown, year
-
-
-    def run_model(self, year, data_type='data'):
-        """
-        :param year: The year the model is being queried for
-        :param data_type: The type of data (MC or data)
-        :return: data events, in_shutdown
-        """
-
-        RunModel = namedtuple('RunModel', 'events, in_shutdown')
-
-        inShutdown, lastRunningYear = self.in_shutdown(year)
-        events = 0
-        if not inShutdown:
-            triggerRate, basisYear = time_dependent_value(year, self.model['trigger_rate'])
-            liveFraction, basisYear = time_dependent_value(year, self.model['live_fraction'])
-            events = SECONDS_PER_YEAR * liveFraction * triggerRate
-        if data_type == 'mc':
-            events *= self.model['mc_event_factor']
-        return RunModel(events, inShutdown)
-
-
-    def mc_event_model(self, year):
-        """
-        Given the various types of MC and their fraction compared to data in mc_evolution,
-        for a the queried year, return the number of events needed to be simulated of each
-        "MC year" in that calendar year.
-
-        :param year: The year the model is being queried for
-        :return: dictionary of {year1: events, year2: events} of types of events needed to be simualted
-        """
-
-        mcEvolution = self.model['mc_evolution']
-        mcEvents = {}
-        for mcType, ramp in mcEvolution.items():
-            mcYear = int(mcType)
-
-        # First figure out what to base the number of MC events
-            currEvents = self.run_model(year).events
-            if self.in_shutdown(year)[0]:
-                lastYear = self.in_shutdown(year)[1]
-                lastEvents = self.run_model(lastYear).events
-            else:
-                lastEvents = 0
-
-            if mcYear > year:
-                futureEvents = self.run_model(mcYear).events
-            else:
-                futureEvents = 0
-            dataEvents = max(currEvents, lastEvents, futureEvents)
-
-        # TODO: Replace this bit of code with interpolate_value from utils.py
-            pastYear = 0
-            futureYear = 3000
-            mc_fraction = None
-            for otherType in sorted(ramp):
-                otherYear = int(otherType)
-                if year == otherYear:  # We found the exact value
-                    mc_fraction = ramp[otherType]
-                    break
-                if year - otherYear < year - pastYear and year > otherYear:
-                    pastYear = otherYear
-                if otherYear > year:
-                   futureYear = otherYear
-                   break
-
-            if mc_fraction is None:  # We didn't get an exact value, interpolate between two values
-                mc_fraction = (ramp[str(pastYear)] + (year - pastYear) *
-                               (ramp[str(futureYear)] - ramp[str(pastYear)]) / (futureYear - pastYear))
-
-            mcEvents[mcType] = mc_fraction * dataEvents
-
-        return mcEvents
 
     def performance_by_year(self, year, tier, data_type=None, kind=None):
         """
@@ -177,7 +101,7 @@ class ResourceModel(object):
             improvement_factor = 1.0
             ramp = self.model['improvement_factors']['software_by_kind'][kind]
             for improve_year in range(int(self.model['start_year']), int(year) + 1):
-                year_factor = interpolate_value(ramp, improve_year)
+                year_factor = self.interpolate_value(ramp, improve_year)
                 improvement_factor *= year_factor
 
             cpuPerEvent = cpuPerEvent / improvement_factor
@@ -185,4 +109,51 @@ class ResourceModel(object):
             cpuPerEvent = None
 
         return cpuPerEvent, sizePerEvent
+
+    @staticmethod
+    def time_dependent_value(year=2016, values=None):
+        """
+        :param year: Year for which we are looking for parameter
+        :param values: dictionary in the form {"2016": 1.0, "2017": 2.0}
+        :return: determined value, first year for which its valid (for calculating improvements from a known point)
+        """
+
+        values = values or {}
+        value = None
+        last_year = None
+        for delta_year in sorted(values.keys()):
+            if int(year) >= int(delta_year):
+                last_year = int(delta_year)
+                value = values[delta_year]
+
+        return value, last_year
+
+    @staticmethod
+    def interpolate_value(ramp, year):
+        """
+        Takes a dictionary of the form: {"2016": x, "2020": y, ...}
+
+        and returns x for year=2016, y for year=2020, and an interpolated value for 2017, 2018, 2019
+        """
+
+        past_year = 0
+        future_year = 3000
+        value = None
+        for other_type in sorted(ramp):
+            other_year = int(other_type)
+            if year == other_year:  # We found the exact value
+                value = ramp[other_type]
+                break
+            if year - other_year < year - past_year and year > other_year:
+                past_year = other_year
+            if other_year > year:
+                future_year = other_year
+                break
+
+        if value is None:  # We didn't get an exact value, interpolate between two values
+            value = (ramp[str(past_year)] + (year - past_year) *
+                     (ramp[str(future_year)] - ramp[str(past_year)]) / (future_year - past_year))
+
+        return value
+
 
