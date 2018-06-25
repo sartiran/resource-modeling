@@ -18,6 +18,13 @@ GIGA = 1e9
 
 DEFAULT_MODEL = ['BaseModel.json', 'RealisticModel.json']
 
+def update_dict(target,changes):
+    for k,v in changes.items():
+        if k in target and isinstance(target[k],dict):
+            update_dict(target[k],v)
+        else:
+            target[k]=v
+
 class ResourceModel(object):
     def __init__(self, inputs, usedefault=True):
 
@@ -33,13 +40,13 @@ class ResourceModel(object):
 
         self.years = list(range(self.model['start_year'], self.model['end_year'] + 1))
 
-
     def configure(self):
         self.model = {}
         for conf in self.inputs:
+            print(conf)
             with open(conf, 'r') as conf_file:
                 conf_data = json.load(conf_file)
-                self.model.update(conf_data)
+                update_dict(self.model, conf_data)
 
     def in_shutdown(self, year):
         """
@@ -75,13 +82,19 @@ class ResourceModel(object):
         
         # TODO:  Big old hack for now because we don't have "kind" for data
         if not kind:
-        # print year
-           kind = str(year)
-        if kind not in ['2016', '2026']:
+            # print year
+            kind = str(year)
+        #print(year)
+        if kind not in ['2017', '2026']:
             if int(kind) >= 2025:
                 kind = '2026'
             else:
                 kind = '2017'
+
+        # it gets worse - there is run 3
+        if kind == '2017' and year > 2020:
+            kind='2021'
+
         kind = str(kind)
 
         try:

@@ -1,12 +1,13 @@
 {
  "data_only_tiers": [
   "RAW"
- ],
- "t0_factor": 1.5, 
- "end_year": 2027, 
+ ], 
+ "t0_factor": 1.5,
+ "end_year": 2030, 
  "hl_start_year": 2026, 
  "live_fraction": {
   "2016": 0.247, 
+  "2021": 0.247, 
   "2026": 0.165, 
   "2027": 0.247
  }, 
@@ -17,10 +18,10 @@
   2019, 
   2020, 
   2024, 
-  2025, 
-  2031
+  2025 
  ],
  "new_detector_years": [
+     2016,
      2017,
      2018,
      2026
@@ -28,6 +29,22 @@
  "start_year": 2017, 
  "trigger_rate": {
   "2016": 1000.0, 
+  "2021": 1000.0, 
   "2026": 10000.0
- }
+ },
+ "plotMaximums" : { "CPUByType" : 120.0,
+ 		    "CPUByTypeAndCapacity": 120.0,
+		    "CPUSecondsByType": 1600.0,
+		    "CPUSecondsByTypeAndCapacity": 1600.0,
+		    "DiskbyTier": 6000.0,
+		    "DiskbyYear": 6000.0,
+		    "ProducedbyTier": 1200.0,
+		    "TapebyTier": 7000.0,
+		    "TapebyYear": 7000.0
+ 		    },
+ "us_fraction_T1T2" : 0.4,
+ "tape_fraction_T0" : 0.345,
+ "disk_fraction_T0" : 0.176,
+ "minYearToPlot"    : 2017
+
 }

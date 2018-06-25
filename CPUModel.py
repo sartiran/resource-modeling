@@ -37,12 +37,15 @@ class CPUModel(EventsModel):
         self.get_cpu_capacity_simple()
         self.get_cpu_capacity()
         self.get_totals()
+        self.get_fractions()
 
     def get_performances(self):
         """
         Get the performance year by year 
         which includes the software improvement factor
         """
+
+        self.cpu_efficiency = self.model['cpu_efficiency']
 
         self.reco_time = {year: self.performance_by_year( year, 'RECO', 
                                                           data_type='data')[0] for year in self.years}
@@ -70,7 +73,7 @@ class CPUModel(EventsModel):
 
         #data_events = {i: rm.run_model(i, data_type='data').events for i in YEARS}
 
-        self.data_cpu_time = {i : self.events_by_year[i]['Data'] * self.reco_time[i] for i in self.years}
+        self.data_cpu_time = {i : self.events_by_year[i]['Data'] * self.reco_time[i] / self.cpu_efficiency for i in self.years}
 
         # The data need to be reconstructed about as quickly as we record them.  In
         # addition, we need to factor in express, repacking, AlCa, CAF
@@ -97,7 +100,7 @@ class CPUModel(EventsModel):
         But the total time needed is the sum of both activities.
         """
 
-        self.rereco_cpu_required = {i : max(0.25 * self.events_by_year[i]['Data'] * 
+        self.rereco_cpu_required = {i : (1.0/ self.cpu_efficiency) * max(0.25 * self.events_by_year[i]['Data'] * 
                                 self.reco_time[i]/seconds_per_month,
                                 self.events_by_year[i]['Data'] * self.reco_time[i] / (3 * seconds_per_month))
                          for i in self.years}
@@ -117,8 +120,8 @@ class CPUModel(EventsModel):
         lhc_mc_events = {i: self.events_by_year[i]['2017 MC'] for i in self.years}
         hllhc_mc_events = {i: self.events_by_year[i]['2026 MC'] for i in self.years}
 
-        self.lhc_mc_cpu_time = {i : lhc_mc_events[i] * self.lhc_sim_time[i] for i in self.years}
-        self.hllhc_mc_cpu_time = {i : hllhc_mc_events[i] * self.hllhc_sim_time[i] for i in self.years}
+        self.lhc_mc_cpu_time = {i : lhc_mc_events[i] * self.lhc_sim_time[i] / self.cpu_efficiency for i in self.years}
+        self.hllhc_mc_cpu_time = {i : hllhc_mc_events[i] * self.hllhc_sim_time[i] / self.cpu_efficiency for i in self.years}
 
         self.lhc_mc_cpu_required = {i : self.lhc_mc_cpu_time[i] / seconds_per_year for i in self.years}
         self.hllhc_mc_cpu_required = {i : self.hllhc_mc_cpu_time[i] / seconds_per_year for i in self.years}
@@ -129,8 +132,49 @@ class CPUModel(EventsModel):
                     self.lhc_mc_cpu_required[i] *= 2
                 else:
                     self.hllhc_mc_cpu_required[i] *= 2
-            
+
     def analysis(self):
+        if 'AnalysisSet' in self.model:
+            self.analysis_new()
+        else:
+            self.analysis_old()
+
+    def analysis_new(self):
+        self.analysis_method = 'new'
+        lhc_mc_events = {i: self.events_by_year[i]['2017 MC'] for i in self.years}
+        hllhc_mc_events = {i: self.events_by_year[i]['2026 MC'] for i in self.years}
+        data_events = {i: self.events_by_year[i]['Data'] for i in self.years}
+            
+        self.analysis_cpu_time={}
+        for i in self.years:
+            data_reads,ty = self.time_dependent_value(year=i, values=self.model['AnalysisReadsPerYearData'])
+            mc_reads,ty = self.time_dependent_value(year=i, values=self.model['AnalysisReadsPerYearMC'])
+            self.analysis_cpu_time[i]=0.
+            for j in self.model['AnalysisSet'][str(i)]:
+                # 2.25 is 1 for prompt + 1.25 of rereco
+                self.analysis_cpu_time[i] += self.model['AnalysisCPUPerEvent'] * data_reads * 2.25 * data_events[j]
+                self.analysis_cpu_time[i] += self.model['AnalysisCPUPerEvent'] * mc_reads * lhc_mc_events[j]
+            if i > 2025:
+                for j in self.model['AnalysisSet'][str(i)]:
+                    self.analysis_cpu_time[i] += self.model['AnalysisCPUPerEvent'] * mc_reads * hllhc_mc_events[j]
+            else:
+                self.analysis_cpu_time[i] += self.model['AnalysisCPUPerEvent'] * mc_reads * hllhc_mc_events[i]
+            self.analysis_cpu_time[i] = self.analysis_cpu_time[i]  / self.cpu_efficiency
+
+        self.analysis_cpu_required={}
+
+        # allow a component that scales with reconstruction
+        analysis_scaled_by_reco = self.model['AnalysisCPUScaledByReco']
+        if analysis_scaled_by_reco > 0:
+            for i in self.years:
+                self.analysis_cpu_time[i] += analysis_scaled_by_reco * (self.lhc_mc_cpu_time[i] + self.hllhc_mc_cpu_time[i] +
+                                                            self.data_cpu_time[i] +  self.rereco_cpu_time[i])
+        #now sum up everything
+        for i in self.years:
+            self.analysis_cpu_required[i] = self.analysis_cpu_time[i] / seconds_per_year
+        
+
+    def analysis_old(self):
         """
         Analysis!  Following something like the 2018 resource request, we make this
         75% of everything else (for a moment).
@@ -151,6 +195,7 @@ class CPUModel(EventsModel):
         required for the above analysis CPU time.  Eric will hate this, I do too,
         we should fix it up later.
         """
+        self.analysis_method = 'old'
         self.analysis_cpu_required = {i : 0.75 *
                         (self.lhc_mc_cpu_required[i] + self.hllhc_mc_cpu_required[i] +
                         self.data_cpu_required[i] + self.rereco_cpu_required[i])
@@ -179,17 +224,61 @@ class CPUModel(EventsModel):
         have three times as many events as we had the previous year.
         """
         mc_events = {i:0 for i in self.years}
+        date_rereco_two_years = self.model['first_year_to_spread_rereco_over_two_years']
 
         for i in self.years:
            shutdown_this_year, dummy = self.in_shutdown(i)
-           shutdown_last_year, dummy = self.in_shutdown(i-1)
+           shutdown_last_year, dummy = self.in_shutdown(i - 1)
+           shutdown_next_year, dummy = self.in_shutdown(i + 1)
            if (shutdown_this_year and not(shutdown_last_year)):
                data_events = 3 * self.events_by_year[i - 1]['Data']
-               self.rereco_cpu_time[i] = data_events * self.reco_time[i]
+               if i >= date_rereco_two_years:
+                   data_events = 0.5 * data_events
+               self.rereco_cpu_time[i] = data_events * self.reco_time[i] / self.cpu_efficiency
                self.rereco_cpu_required[i] = self.rereco_cpu_time[i] / seconds_per_year
-               mc_events[i] = 3 * self.events_by_year[i - 1]['2017 MC']
-               self.lhc_mc_cpu_time[i] = mc_events[i] * self.lhc_sim_time[i]
-               self.lhc_mc_cpu_required[i] = self.lhc_mc_cpu_time[i] / seconds_per_year
+
+               if i >=date_rereco_two_years:
+                   if (i + 1 in self.events_by_year):
+                       if shutdown_next_year:
+                           self.events_by_year[i + 1]['Data'] = 0
+                           self.rereco_cpu_time[i + 1] = 0                   
+                           self.rereco_cpu_required[i + 1] = 0
+                       self.events_by_year[i + 1]['Data'] += data_events
+                       self.rereco_cpu_time[i + 1] += self.rereco_cpu_time[i]
+                       self.rereco_cpu_required[i + 1] += rereco_cpu_required[i]
+               
+               if i < 2025:
+                   mc_events[i] = 3 * self.events_by_year[i - 1]['2017 MC']
+                   if i >= date_rereco_two_years:
+                       mc_events[i] = 0.5 * mc_events[i]
+                   self.lhc_mc_cpu_time[i] = mc_events[i] * self.lhc_sim_time[i] / self.cpu_efficiency
+                   self.lhc_mc_cpu_required[i] = self.lhc_mc_cpu_time[i] / seconds_per_year
+                   if i >= date_rereco_two_years:
+                       if i + 1 in events_by_year:
+                           if shutdown_next_year:
+                               self.events_by_year[i + 1]['2017 MC'] = 0
+                               self.lhc_mc_cpu_time[i + 1] = 0
+                               self.lhc_mc_cpu_required[i + 1] = 0
+                           self.events_by_year[i + 1]['2017 MC'] += mc_events[i]
+                           self.lhc_mc_cpu_time[i + 1] += self.lhc_mc_cpu_time[i]
+                           self.lhc_mc_cpu_required[i + 1] += lhc_mc_cpu_required[i]
+
+               else:
+                   mc_events[i] = 3 * self.events_by_year[i - 1]['2026 MC']
+                   if i >= date_rereco_two_years:
+                       mc_events[i]=0.5 * mc_events[i]
+
+                   self.hllhc_mc_cpu_time[i] = mc_events[i] * self.hllhc_sim_time[i] / self.cpu_efficiency
+                   self.hllhc_mc_cpu_required[i] = self.hllhc_mc_cpu_time[i] / seconds_per_year
+                   if i >= date_rereco_two_years:
+                       if i + 1 in events_by_year:
+                           if shutdown_next_year:
+                               self.events_by_year[i + 1]['2026 MC'] = 0
+                               self.hllhc_mc_cpu_time[i + 1] = 0
+                               self.hllhc_mc_cpu_required[i + 1] = 0
+                           self.events_by_year[i + 1]['2026 MC'] += mc_events[i]
+                           self.hllhc_mc_cpu_time[i + 1] += self.hllhc_mc_cpu_time[i]
+                           self.hllhc_mc_cpu_required[i + 1] += self.hllhc_mc_cpu_required[i]
 
     def get_totals(self):
 
@@ -234,12 +323,12 @@ class CPUModel(EventsModel):
         cpu_improvement_factor = self.model['improvement_factors']['hardware']
         cpu_improvement = {i : cpu_improvement_factor ** (i-2017) for i in self.years}
 
-        self.cpu_capacity_simple = {2016 : 1.4 * mega}
+        self.cpu_capacity_simple = {self.years[0] - 1 : 1.4 * mega}
 
         # This variable assumes that you can have the cpu_capacity for an entire
         # year and thus calculates the HS06 * s available (in principle).
 
-        self.cpu_time_capacity_simple = {2016 : 1.4 * mega}
+        self.cpu_time_capacity_simple = {self.years[0] - 1 : 1.4 * mega}
 
         retirement_rate = 0.05
 
@@ -247,8 +336,8 @@ class CPUModel(EventsModel):
             self.cpu_capacity_simple[i] = self.cpu_capacity_simple[i-1] * (1 - retirement_rate) + (300 if i < 2020 else 600) * kilo * cpu_improvement[i]
             self.cpu_time_capacity_simple[i] = self.cpu_capacity_simple[i] * seconds_per_year
 
-        del self.cpu_capacity_simple[2016]
-        del self.cpu_time_capacity_simple[2016]
+        del self.cpu_capacity_simple[self.years[0] - 1]
+        del self.cpu_time_capacity_simple[self.years[0] - 1]
 
 
     def get_cpu_capacity(self):
@@ -287,4 +376,56 @@ class CPUModel(EventsModel):
                 cpu_retired = cpu_added.get(str(int(year) - self.model['capacity_model']['cpu_lifetime']), 0)
                 self.cpu_capacity[str(year)] = self.cpu_capacity[str(int(year) - 1)] + cpu_added[str(year)] - cpu_retired
                 self.cpu_time_capacity[str(year)] = self.cpu_capacity[str(year)] * seconds_per_year
+
+    def get_fractions(self):
+        self.fractions = {}
+        self.fractions['SIM'] = {}
+        self.fractions['DIGI'] = {}
+        self.fractions['RECO'] = {}
+        self.fractions['RERECO'] = {}
+        self.fractions['ANALYSIS'] = {}
+        self.uscpu = {}
+
+        self.fractions['PROMPT'] = 0.
+        self.fractions['GEN'] = 0.03
+        self.fractions['us'] = self.model['us_fraction_T1T2']
+
+        
+        for i in self.years:
+            #first some calculations we didn't do before
+            lhcSim = self.performance_by_year(i, 'GENSIM', data_type='mc', kind='2017')[0]
+            lhcDigi = self.performance_by_year(i, 'DIGI', data_type='mc', kind='2017')[0]
+            lhcReco = self.performance_by_year(i, 'RECO', data_type='mc', kind='2017')[0]
+            hllhcSim = self.performance_by_year(i, 'GENSIM', data_type='mc', kind='2026')[0]
+            hllhcDigi = self.performance_by_year(i, 'DIGI', data_type='mc', kind='2026')[0]
+            hllhcReco =  self.performance_by_year(i, 'RECO', data_type='mc', kind='2026')[0]
+
+            lhcDigiFraction = lhcDigi / (lhcSim + lhcDigi + lhcReco)
+            lhcRecoFraction = lhcReco / (lhcSim + lhcDigi + lhcReco)
+            lhcSimFraction = lhcSim / (lhcSim + lhcDigi + lhcReco)
+
+            hllhcDigiFraction = hllhcDigi / (hllhcSim + hllhcDigi + hllhcReco)
+            hllhcRecoFraction = hllhcReco / (hllhcSim + hllhcDigi + hllhcReco)
+            hllhcSimFraction = hllhcSim / (hllhcSim + hllhcDigi + hllhcReco)
+
+            lhcFraction= self.lhc_mc_cpu_time[i] / (self.lhc_mc_cpu_time[i] + self.hllhc_mc_cpu_time[i])
+
+            totalT1T2 = (self.total_cpu_time[i] - self.data_cpu_time[i]) * (1.0 + self.fractions['GEN'])
+
+            self.fractions['SIM'][i] = (lhcSimFraction * lhcFraction + hllhcSimFraction * (1.0 - lhcFraction)) *\
+                                       (self.lhc_mc_cpu_time[i] + self.hllhc_mc_cpu_time[i]) / totalT1T2
+
+            self.fractions['DIGI'][i] = (lhcDigiFraction * lhcFraction +
+                                         hllhcDigiFraction * (1.0 - lhcFraction)) *\
+                                         (self.lhc_mc_cpu_time[i] + self.hllhc_mc_cpu_time[i]) / totalT1T2
+
+            self.fractions['RECO'][i] = (lhcRecoFraction * lhcFraction +
+                                        hllhcRecoFraction * (1.0 - lhcFraction)) *\
+                                        (self.lhc_mc_cpu_time[i] + self.hllhc_mc_cpu_time[i]) / totalT1T2
+
+            self.fractions['RERECO'][i] = self.rereco_cpu_time[i] / totalT1T2
+            self.fractions['ANALYSIS'][i] = self.analysis_cpu_time[i] / totalT1T2
+            promptFraction = 0.
+            self.uscpu[i] = totalT1T2 * self.fractions['us']/tera
+
 

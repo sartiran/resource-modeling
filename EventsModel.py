@@ -86,7 +86,7 @@ class EventsModel(ResourceModel):
             else:
                 last_events = 0
 
-            if mc_year > year:
+            if mc_year > year and mc_year in self.events_by_year:
                 future_events = self.events_by_year[mc_year]['Data']
             else:
                 future_events = 0

@@ -66,16 +66,22 @@ class DataModel(EventsModel):
         disk_copies = {}
         tape_copies = {}
 
+        disk_scale_factor_by_year = {"Run1 & 2015" : {"2000": 1.0, "2050" : 1.0} }
+        tape_scale_factor_by_year = {"Run1 & 2015" : {"2000": 1.0, "2050" : 1.0} }
+       
         for tier in self.tiers:
             v = self.model['storage_model']['versions'][tier]
             dr = self.model['storage_model']['disk_replicas'][tier]
             tr = self.model['storage_model']['tape_replicas'][tier]
             vr = zip(v, dr)
             disk_copies[tier] = [versions * replicas for versions, replicas in vr]
+            tape_copies[tier] = [versions * replicas for versions, replicas in zip(v, tr)]
 
-            # Assume we have the highest number of versions in year 1, save n replicas of that
-            tape_copies[tier] = v[0] * tr
             if not tape_copies[tier]: tape_copies[tier] = [0, 0, 0]
+            disk_scale_factor_by_year[tier] = self.model['storage_model']['disk_scaling'].get(tier,None)
+            tape_scale_factor_by_year[tier] = self.model['storage_model']['tape_scaling'].get(tier,None)
+            if disk_scale_factor_by_year[tier] is None: disk_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+            if tape_scale_factor_by_year[tier] is None: tape_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
 
         # Loop over years to determine how much is produced without versions or replicas
         for year in self.years:
@@ -106,23 +112,35 @@ class DataModel(EventsModel):
                      self.produced_by_tier[self.years.index(year)][self.tiers.index(tier)] += size / PETA
 
         # Initialize a matrix with tiers and years
-        self.year_columns = self.years + ['Capacity', 'Year', 'Run1 & 2']
+        self.year_columns = self.years + ['Capacity', 'Year', 'Run1 & 2015']
 
         # Initialize a matrix with years and years
         self.disk_by_year = [[0 for _i in self.year_columns] for _j in self.years]
         self.tape_by_year = [[0 for _i in self.year_columns] for _j in self.years]
 
+        #Simple factors inspired by spreadsheet for how "efficiently" we use disk and tape
+        #two components - 1 a simple "filling" factor - eg, DDM fills X% of the disk
+        #                 2 buffer space at the Tier1s (tier-2s are handled below) 
+        dff = self.model['disk_fill_factor']
+        t1df = self.model['tier1_disk_fraction']
+        t1dbf = self.model['tier1_disk_buffer_fraction']
+        self.disk_fill_factor = (1.0 / dff) * ( t1df * (1.0 + t1dbf) +  (1.0 - t1df))
+        self.tape_fill_factor = 1.0 / self.model['tape_fill_factor']
+
         # Loop over years to determine how much is saved
+        self.copies_on_disk={}
+        self.tiers_on_disk={}
         for year in self.years:
            # Add static (or nearly) data
             for tier, spaces in self.model['static_disk'].items():
                 size, produced_year = self.time_dependent_value(year=year, values=spaces)
-
+                if produced_year < self.years[0]: produced_year = self.years[0]
                 data_on_disk[year]['Other'][tier] += size
                 self.disk_samples[year].append([produced_year, 'Other', tier, size])
                 self.disk_by_year[self.years.index(year)][self.years.index(produced_year)] += size / PETA
             for tier, spaces in self.model['static_tape'].items():
                 size, produced_year = self.time_dependent_value(year=year, values=spaces)
+                if produced_year < self.years[0]: produced_year = self.years[0]
                 data_on_tape[year]['Other'][tier] += size
                 self.tape_samples[year].append([produced_year, 'Other', tier, size])
                 self.tape_by_year[self.years.index(year)][self.years.index(produced_year)] += size / PETA
@@ -132,9 +150,15 @@ class DataModel(EventsModel):
             for produced_year, data_dict in data_produced.items():
                 for data_type, tier_dict in data_dict.items():
                     for tier, size in tier_dict.items():
+                        scale_disk,ty = self.time_dependent_value(year=produced_year, values=disk_scale_factor_by_year[tier])
+                        scale_tape,ty = self.time_dependent_value(year=produced_year, values=tape_scale_factor_by_year[tier])
                         disk_copies_by_delta = disk_copies[tier]
                         tape_copies_by_delta = tape_copies[tier]
-                        if int(produced_year) <= int(year):  # Can't save data for future years
+                        if int(produced_year) <= int(year):  # Can't save data for future year
+                            if int(produced_year) == int(year):
+                                if tier != "USER" and tier != "GENSIM" and tier!="RAW":
+                                    self.tiers_on_disk[year] = self.tiers_on_disk.get(year,0) + 1
+                                    self.copies_on_disk[year] = self.copies_on_disk.get(year,0) + disk_copies_by_delta[0] * scale_disk 
                             if year - produced_year >= len(disk_copies_by_delta):
                                 rev_on_disk = disk_copies_by_delta[-1]  # Revisions = versions * copies
                                 rev_on_tape = tape_copies_by_delta[-1]  # Assume what we have for the last year is good for out years
@@ -146,13 +170,16 @@ class DataModel(EventsModel):
                                 rev_on_disk = disk_copies_by_delta[year - produced_year]
                                 rev_on_tape = tape_copies_by_delta[year - produced_year]
                             if size and rev_on_disk:
-                                data_on_disk[year][data_type][tier] += size * rev_on_disk
-                                self.disk_samples[year].append([produced_year, data_type, tier, size * rev_on_disk, rev_on_disk])
-                                self.disk_by_year[self.years.index(year)][self.years.index(produced_year)] += size * rev_on_disk / PETA
+                                contr = size * rev_on_disk * self.disk_fill_factor * scale_disk
+                                data_on_disk[year][data_type][tier] += contr
+                                self.disk_samples[year].append([produced_year, data_type, tier, contr, rev_on_disk])
+                                self.disk_by_year[self.years.index(year)][self.years.index(produced_year)] += contr / PETA
                             if size and rev_on_tape:
-                                data_on_tape[year][data_type][tier] += size * rev_on_tape
-                                self.tape_samples[year].append([produced_year, data_type, tier, size * rev_on_tape, rev_on_tape])
-                                self.tape_by_year[self.years.index(year)][self.years.index(produced_year)] += size * rev_on_tape / PETA
+                                #contr = size * rev_on_tape * self.tape_fill_factor * scale_tape
+                                contr = size * rev_on_tape * scale_tape
+                                data_on_tape[year][data_type][tier] += contr
+                                self.tape_samples[year].append([produced_year, data_type, tier, contr, rev_on_tape])
+                                self.tape_by_year[self.years.index(year)][self.years.index(produced_year)] += contr / PETA
 
 
             # Add capacity numbers
@@ -180,13 +207,21 @@ class DataModel(EventsModel):
             self.tape_by_tier[self.years.index(year)][self.tier_columns.index('Capacity')] = self.capacity['tape'][str(year)] / PETA
             self.tape_by_tier[self.years.index(year)][self.tier_columns.index('Year')] = str(year)
 
-        self.disk_by_tier[self.years.index(2017)][self.tier_columns.index('Run1 & 2')] = 25
-        self.disk_by_tier[self.years.index(2018)][self.tier_columns.index('Run1 & 2')] = 10
-        self.disk_by_tier[self.years.index(2019)][self.tier_columns.index('Run1 & 2')] = 5
-        self.disk_by_tier[self.years.index(2020)][self.tier_columns.index('Run1 & 2')] = 0
-
-        self.disk_by_year[self.years.index(2017)][self.year_columns.index('Run1 & 2')] = 25
-        self.disk_by_year[self.years.index(2018)][self.year_columns.index('Run1 & 2')] = 10
-        self.disk_by_year[self.years.index(2019)][self.year_columns.index('Run1 & 2')] = 5
-        self.disk_by_year[self.years.index(2020)][self.year_columns.index('Run1 & 2')] = 0
+        if 'legacyInfoDict' in self.model:
+            for year,val in self.model['legacyInfoDict'].items():
+                self.disk_by_tier[self.years.index(int(year))][self.tier_columns.index('Run1 & 2015')] = val
+                self.disk_by_year[self.years.index(int(year))][self.year_columns.index('Run1 & 2015')] = val
+        else:
+            if 2016 in self.years:
+                self.disk_by_tier[self.years.index(2016)][self.tier_columns.index('Run1 & 2015')] = 25
+            self.disk_by_tier[self.years.index(2017)][self.tier_columns.index('Run1 & 2015')] = 25
+            self.disk_by_tier[self.years.index(2018)][self.tier_columns.index('Run1 & 2015')] = 10
+            self.disk_by_tier[self.years.index(2019)][self.tier_columns.index('Run1 & 2015')] = 5
+            self.disk_by_tier[self.years.index(2020)][self.tier_columns.index('Run1 & 2015')] = 0
+            if 2016 in self.years:
+                self.disk_by_year[self.years.index(2016)][self.year_columns.index('Run1 & 2015')] = 25
+            self.disk_by_year[self.years.index(2017)][self.year_columns.index('Run1 & 2015')] = 25
+            self.disk_by_year[self.years.index(2018)][self.year_columns.index('Run1 & 2015')] = 10
+            self.disk_by_year[self.years.index(2019)][self.year_columns.index('Run1 & 2015')] = 5
+            self.disk_by_year[self.years.index(2020)][self.year_columns.index('Run1 & 2015')] = 0
 
