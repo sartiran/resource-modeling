@@ -78,10 +78,15 @@ class DataModel(EventsModel):
             tape_copies[tier] = [versions * replicas for versions, replicas in zip(v, tr)]
 
             if not tape_copies[tier]: tape_copies[tier] = [0, 0, 0]
-            disk_scale_factor_by_year[tier] = self.model['storage_model']['disk_scaling'].get(tier,None)
-            tape_scale_factor_by_year[tier] = self.model['storage_model']['tape_scaling'].get(tier,None)
-            if disk_scale_factor_by_year[tier] is None: disk_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
-            if tape_scale_factor_by_year[tier] is None: tape_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+            
+            try:
+                disk_scale_factor_by_year[tier] = self.model['storage_model']['disk_scaling'].get(tier,None)
+                tape_scale_factor_by_year[tier] = self.model['storage_model']['tape_scaling'].get(tier,None)
+                if disk_scale_factor_by_year[tier] is None: disk_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+                if tape_scale_factor_by_year[tier] is None: tape_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+            except:
+                disk_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+                tape_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
 
         # Loop over years to determine how much is produced without versions or replicas
         for year in self.years:
