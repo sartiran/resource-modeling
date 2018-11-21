@@ -79,14 +79,14 @@ class DataModel(EventsModel):
 
             if not tape_copies[tier]: tape_copies[tier] = [0, 0, 0]
             
-            try:
-                disk_scale_factor_by_year[tier] = self.model['storage_model']['disk_scaling'].get(tier,None)
-                tape_scale_factor_by_year[tier] = self.model['storage_model']['tape_scaling'].get(tier,None)
-                if disk_scale_factor_by_year[tier] is None: disk_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
-                if tape_scale_factor_by_year[tier] is None: tape_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
-            except:
-                disk_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
-                tape_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+            #try:
+            disk_scale_factor_by_year[tier] = self.model['storage_model']['disk_scaling'].get(tier,None)
+            tape_scale_factor_by_year[tier] = self.model['storage_model']['tape_scaling'].get(tier,None)
+            if disk_scale_factor_by_year[tier] is None: disk_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+            if tape_scale_factor_by_year[tier] is None: tape_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+            #except:
+            #    disk_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
+            #    tape_scale_factor_by_year[tier]={"2000": 1.0, "2050" : 1.0}
 
         # Loop over years to determine how much is produced without versions or replicas
         for year in self.years:
@@ -159,6 +159,7 @@ class DataModel(EventsModel):
                         scale_tape,ty = self.time_dependent_value(year=produced_year, values=tape_scale_factor_by_year[tier])
                         disk_copies_by_delta = disk_copies[tier]
                         tape_copies_by_delta = tape_copies[tier]
+                        print("DBP1", year, tier, tape_copies_by_delta)
                         if int(produced_year) <= int(year):  # Can't save data for future year
                             if int(produced_year) == int(year):
                                 if tier != "USER" and tier != "GENSIM" and tier!="RAW":
@@ -183,8 +184,9 @@ class DataModel(EventsModel):
                                 #contr = size * rev_on_tape * self.tape_fill_factor * scale_tape
                                 contr = size * rev_on_tape * scale_tape
                                 data_on_tape[year][data_type][tier] += contr
-                                self.tape_samples[year].append([produced_year, data_type, tier, contr, rev_on_tape])
-                                self.tape_by_year[self.years.index(year)][self.years.index(produced_year)] += contr / PETA
+				#Bug ?: add the tape fill factor only in the tape_samples table
+                                self.tape_samples[year].append([produced_year, data_type, tier, contr * self.tape_fill_factor, rev_on_tape])
+                                self.tape_by_year[self.years.index(year)][self.years.index(produced_year)] += contr * self.tape_fill_factor / PETA
 
 
             # Add capacity numbers
@@ -192,7 +194,7 @@ class DataModel(EventsModel):
             self.disk_by_year[self.years.index(year)][self.year_columns.index('Year')] = str(year)
             self.tape_by_year[self.years.index(year)][self.year_columns.index('Capacity')] = self.capacity['tape'][str(year)] / PETA
             self.tape_by_year[self.years.index(year)][self.year_columns.index('Year')] = str(year)
-
+            #print("DBP1", year, self.tape_samples[year])
         # Initialize a matrix with tiers and years
         # Add capacity, years, and fake tiers as columns for the data frame
         self.tier_columns = self.tiers + ['Capacity', 'Year'] + self.static_tiers

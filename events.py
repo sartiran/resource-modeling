@@ -16,8 +16,20 @@ from ModelOut import plotEvents
 
 modelNames = None
 if len(sys.argv) > 1:
-    modelNames = sys.argv[1].split(',')
+    modelNames=[]
+    for a in sys.argv[1:]:
+        modelNames = modelNames + a.split(',')
 em = EventsModel(modelNames)
+#print('DBP3', modelNames)
 
-plotEvents(em.get_events_matrix(), name='Produced by Kind.png', title='Events produced by type', columns=em.data_kinds, index=em.years)
+matrix = em.get_events_matrix()
+
+print('Year', em.data_kinds)
+for year in em.years:
+    print(year, matrix[em.years.index(year)])
+
+#print('DBP2', em.events_by_year)
+
+
+plotEvents(matrix, name='Produced by Kind.png', title='Events produced by type', columns=em.data_kinds, index=em.years)
 

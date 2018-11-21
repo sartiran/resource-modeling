@@ -102,3 +102,5 @@ ENV/
 
 # png files
 *.png
+
+test_script.out.d*

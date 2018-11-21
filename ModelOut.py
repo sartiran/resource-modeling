@@ -71,7 +71,7 @@ def plotStorage(data, name, title='', columns=None, index=None, maximum=None, mi
 def plotEvents(data, name, title='', columns=None, index=None, maximum=None, minYear=None):
     # Make the plot of produced events per year by type (input to other plots)
     plot_order = sorted(columns)
-    order_inds = [ SORT_ORDER.index(p) for p in plot_order]
+    #order_inds = [ SORT_ORDER.index(p) for p in plot_order]
     frame = pd.DataFrame(data, columns=columns, index=index)
     ax = frame[plot_order].plot(kind='bar', stacked=True, colormap=COLOR_MAP)
     ax.set(ylabel='Billions of events', title=title)

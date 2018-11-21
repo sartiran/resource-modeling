@@ -26,7 +26,8 @@ class EventsModel(ResourceModel):
     def define_data_kinds(self):
         
         # Just an hack. But I'd rather get the distinct set of keys in mc_evolution
-        self.data_kinds = [key + ' MC' for key in self.model['mc_evolution']['2017'].keys()]
+        #self.data_kinds = [key + ' MC' for key in self.model['mc_evolution']['2017'].keys()]
+        self.data_kinds = [key + ' MC' for key in self.model['mc_evolution'].keys()]
         self.data_kinds.append('Data')
 
     def run_model(self, year, data_type='data'):
@@ -71,7 +72,7 @@ class EventsModel(ResourceModel):
 
         warning: this requies that the data events are already there
         """
-
+ 
         curr_events = self.events_by_year[year]['Data']
 
         mc_evolution = self.model['mc_evolution']
@@ -86,10 +87,13 @@ class EventsModel(ResourceModel):
             else:
                 last_events = 0
 
-            if mc_year > year and mc_year in self.events_by_year:
-                future_events = self.events_by_year[mc_year]['Data']
+            #if mc_year > year and mc_year in self.events_by_year:
+            #    future_events = self.events_by_year[mc_year]['Data']
+            if mc_year > year:
+                future_events = self.run_model(mc_year).events
             else:
                 future_events = 0
+
             data_events = max(curr_events, last_events, future_events)
 
             mc_fraction = self.interpolate_value(ramp, year)

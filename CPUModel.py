@@ -120,8 +120,15 @@ class CPUModel(EventsModel):
         lhc_mc_events = {i: self.events_by_year[i]['2017 MC'] for i in self.years}
         hllhc_mc_events = {i: self.events_by_year[i]['2026 MC'] for i in self.years}
 
+        #print('DBP2', 'Year', self.data_kinds)
+        #for year in self.years:
+        #    print('DBP2', year, self.events_by_year[self.years.index(year)]['2017 MC'], self.events_by_year[self.years.index(year)]['2026 MC'])
+
         self.lhc_mc_cpu_time = {i : lhc_mc_events[i] * self.lhc_sim_time[i] / self.cpu_efficiency for i in self.years}
         self.hllhc_mc_cpu_time = {i : hllhc_mc_events[i] * self.hllhc_sim_time[i] / self.cpu_efficiency for i in self.years}
+
+        #for year in self.years:
+        #    print("DBP: ", year, hllhc_mc_events[year], self.hllhc_sim_time[year], self.cpu_efficiency, self.hllhc_mc_cpu_time[year])
 
         self.lhc_mc_cpu_required = {i : self.lhc_mc_cpu_time[i] / seconds_per_year for i in self.years}
         self.hllhc_mc_cpu_required = {i : self.hllhc_mc_cpu_time[i] / seconds_per_year for i in self.years}
@@ -245,7 +252,7 @@ class CPUModel(EventsModel):
                            self.rereco_cpu_required[i + 1] = 0
                        self.events_by_year[i + 1]['Data'] += data_events
                        self.rereco_cpu_time[i + 1] += self.rereco_cpu_time[i]
-                       self.rereco_cpu_required[i + 1] += rereco_cpu_required[i]
+                       self.rereco_cpu_required[i + 1] += self.rereco_cpu_required[i]
                
                if i < 2025:
                    mc_events[i] = 3 * self.events_by_year[i - 1]['2017 MC']
@@ -253,16 +260,17 @@ class CPUModel(EventsModel):
                        mc_events[i] = 0.5 * mc_events[i]
                    self.lhc_mc_cpu_time[i] = mc_events[i] * self.lhc_sim_time[i] / self.cpu_efficiency
                    self.lhc_mc_cpu_required[i] = self.lhc_mc_cpu_time[i] / seconds_per_year
+                   
                    if i >= date_rereco_two_years:
-                       if i + 1 in events_by_year:
+                       if i + 1 in self.events_by_year:
                            if shutdown_next_year:
                                self.events_by_year[i + 1]['2017 MC'] = 0
                                self.lhc_mc_cpu_time[i + 1] = 0
                                self.lhc_mc_cpu_required[i + 1] = 0
                            self.events_by_year[i + 1]['2017 MC'] += mc_events[i]
                            self.lhc_mc_cpu_time[i + 1] += self.lhc_mc_cpu_time[i]
-                           self.lhc_mc_cpu_required[i + 1] += lhc_mc_cpu_required[i]
-
+                           #BUG!: self.lhc_mc_cpu_required[i + 1] += self.lhc_mc_cpu_required[i]
+                           self.lhc_mc_cpu_required[i] += self.lhc_mc_cpu_required[i]
                else:
                    mc_events[i] = 3 * self.events_by_year[i - 1]['2026 MC']
                    if i >= date_rereco_two_years:
@@ -271,7 +279,7 @@ class CPUModel(EventsModel):
                    self.hllhc_mc_cpu_time[i] = mc_events[i] * self.hllhc_sim_time[i] / self.cpu_efficiency
                    self.hllhc_mc_cpu_required[i] = self.hllhc_mc_cpu_time[i] / seconds_per_year
                    if i >= date_rereco_two_years:
-                       if i + 1 in events_by_year:
+                       if i + 1 in self.events_by_year:
                            if shutdown_next_year:
                                self.events_by_year[i + 1]['2026 MC'] = 0
                                self.hllhc_mc_cpu_time[i + 1] = 0
@@ -392,13 +400,17 @@ class CPUModel(EventsModel):
 
         
         for i in self.years:
+            #Bug! year = i
+            year = 2030 
+
             #first some calculations we didn't do before
-            lhcSim = self.performance_by_year(i, 'GENSIM', data_type='mc', kind='2017')[0]
-            lhcDigi = self.performance_by_year(i, 'DIGI', data_type='mc', kind='2017')[0]
-            lhcReco = self.performance_by_year(i, 'RECO', data_type='mc', kind='2017')[0]
-            hllhcSim = self.performance_by_year(i, 'GENSIM', data_type='mc', kind='2026')[0]
-            hllhcDigi = self.performance_by_year(i, 'DIGI', data_type='mc', kind='2026')[0]
-            hllhcReco =  self.performance_by_year(i, 'RECO', data_type='mc', kind='2026')[0]
+            lhcSim = self.performance_by_year(year, 'GENSIM', data_type='mc', kind='2017')[0]
+            lhcDigi = self.performance_by_year(year, 'DIGI', data_type='mc', kind='2017')[0]
+            lhcReco = self.performance_by_year(year, 'RECO', data_type='mc', kind='2017')[0]
+
+            hllhcSim = self.performance_by_year(year, 'GENSIM', data_type='mc', kind='2026')[0]
+            hllhcDigi = self.performance_by_year(year, 'DIGI', data_type='mc', kind='2026')[0]
+            hllhcReco =  self.performance_by_year(year, 'RECO', data_type='mc', kind='2026')[0]
 
             lhcDigiFraction = lhcDigi / (lhcSim + lhcDigi + lhcReco)
             lhcRecoFraction = lhcReco / (lhcSim + lhcDigi + lhcReco)
